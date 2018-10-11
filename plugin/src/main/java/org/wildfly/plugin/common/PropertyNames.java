@@ -47,6 +47,16 @@ public interface PropertyNames {
 
     String DEPLOYMENT_TARGET_DIR = "wildfly.deployment.targetDir";
 
+    String DEPLOYMENT_ARTIFACT_ID = "wildfly.deployment.artifact";
+
+    String DEPLOYMENT_GROUP_ID = "wildfly.deployment.group";
+
+    String DEPLOYMENT_VERSION = "wildfly.deployment.version";
+
+    String DEPLOYMENT_TYPE = "wildfly.deployment.type";
+
+    String DEPLOYMENT_CLASSIFIER = "wildfly.deployment.classifier";
+
     String DOMAIN_CONFIG = "wildfly.domainConfig";
 
     String FAIL_ON_ERROR = "wildfly.failOnError";

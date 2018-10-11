@@ -22,45 +22,57 @@
 
 package org.wildfly.plugin.deployment;
 
-import java.io.File;
-import java.io.IOException;
-import java.util.Objects;
-import java.util.Set;
-
-import org.apache.maven.artifact.Artifact;
+import org.apache.maven.model.Dependency;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
-import org.apache.maven.plugins.annotations.ResolutionScope;
+import org.codehaus.plexus.util.StringUtils;
 import org.wildfly.plugin.common.PropertyNames;
 import org.wildfly.plugin.core.Deployment;
 import org.wildfly.plugin.core.DeploymentManager;
 import org.wildfly.plugin.core.DeploymentResult;
+import org.wildfly.plugin.server.ArtifactResolver;
+
+import javax.inject.Inject;
+import java.io.File;
+import java.io.IOException;
+import java.util.Collections;
+import java.util.List;
 
 /**
  * Deploys an arbitrary artifact to the WildFly application server
  *
  * @author Stuart Douglas
  */
-@Mojo(name = "deploy-artifact", requiresDependencyResolution = ResolutionScope.TEST, threadSafe = true)
+@Mojo(name = "deploy-artifact", requiresProject = false, threadSafe = true)
 public class DeployArtifactMojo extends AbstractDeployment {
-
     /**
      * The artifact to deploys groupId
      */
-    @Parameter
+    @Parameter(required = true, property = PropertyNames.DEPLOYMENT_GROUP_ID)
     private String groupId;
-
 
     /**
      * The artifact to deploys artifactId
      */
-    @Parameter
+    @Parameter(required = true, property = PropertyNames.DEPLOYMENT_ARTIFACT_ID)
     private String artifactId;
 
     /**
-     * The artifact to deploys classifier. Note that the classifier must also be set on the dependency being deployed.
+     * The artifact to deploys version
      */
-    @Parameter
+    @Parameter(required = true, property = PropertyNames.DEPLOYMENT_VERSION)
+    private String version;
+
+    /**
+     * The artifact to deploys type
+     */
+    @Parameter(defaultValue = "jar", property = PropertyNames.DEPLOYMENT_TYPE)
+    private String type;
+
+    /**
+     * The artifact to deploys classifier
+     */
+    @Parameter(property = PropertyNames.DEPLOYMENT_CLASSIFIER)
     private String classifier;
 
     /**
@@ -72,6 +84,9 @@ public class DeployArtifactMojo extends AbstractDeployment {
     @Parameter(defaultValue = "true", property = PropertyNames.DEPLOY_FORCE)
     private boolean force;
 
+    @Inject
+    private ArtifactResolver artifactResolver;
+
     /**
      * The resolved dependency file
      */
@@ -81,26 +96,22 @@ public class DeployArtifactMojo extends AbstractDeployment {
     @Override
     public void validate(final boolean isDomain) throws MojoDeploymentException {
         super.validate(isDomain);
-        if (artifactId == null) {
-            throw new MojoDeploymentException("deploy-artifact must specify the artifactId");
-        }
-        if (groupId == null) {
+
+        if (StringUtils.isEmpty(groupId))
             throw new MojoDeploymentException("deploy-artifact must specify the groupId");
-        }
-        final Set<Artifact> dependencies = project.getDependencyArtifacts();
-        Artifact artifact = null;
-        for (final Artifact a : dependencies) {
-            if (Objects.equals(a.getArtifactId(), artifactId) &&
-                    Objects.equals(a.getGroupId(), groupId) &&
-                    Objects.equals(a.getClassifier(), classifier)) {
-                artifact = a;
-                break;
-            }
-        }
-        if (artifact == null) {
-            throw new MojoDeploymentException("Could not resolve artifact to deploy " + groupId + ":" + artifactId);
-        }
-        file = artifact.getFile();
+        if (StringUtils.isEmpty(artifactId))
+            throw new MojoDeploymentException("deploy-artifact must specify the artifactId");
+        if (StringUtils.isEmpty(version))
+            fillMissingArtifactVersion();
+
+        String artifactStr = ArtifactResolver.ArtifactNameSplitter.of(null)
+                .setGroupId(groupId)
+                .setArtifactId(artifactId)
+                .setVersion(version)
+                .setPackaging(type)
+                .setClassifier(classifier)
+                .asString();
+        file = artifactResolver.resolve(project, artifactStr);
     }
 
     @Override
@@ -114,10 +125,42 @@ public class DeployArtifactMojo extends AbstractDeployment {
     }
 
     @Override
-    protected DeploymentResult executeDeployment(final DeploymentManager deploymentManager, final Deployment deployment) throws IOException {
+    protected DeploymentResult executeDeployment(final DeploymentManager deploymentManager, final Deployment deployment)
+            throws IOException {
         if (force) {
             return deploymentManager.forceDeploy(deployment);
         }
+
         return deploymentManager.deploy(deployment);
+    }
+
+    private void fillMissingArtifactVersion() throws MojoDeploymentException {
+        List<Dependency> dependencies = project.getDependencies();
+        List<Dependency> managementDependencies = project.getDependencyManagement() == null ? Collections.<Dependency>emptyList()
+                : project.getDependencyManagement().getDependencies();
+
+        if (!findDependencyVersion(dependencies, false)
+                && (project.getDependencyManagement() == null || !findDependencyVersion(managementDependencies, false))
+                && !findDependencyVersion(dependencies, true)
+                && (project.getDependencyManagement() == null || !findDependencyVersion(managementDependencies, true))) {
+            throw new MojoDeploymentException("Unable to find artifact version of " + groupId + ":"
+                    + artifactId + " in either dependency list or in project's dependency management.");
+        }
+    }
+
+    @SuppressWarnings("BooleanMethodIsAlwaysInverted")
+    private boolean findDependencyVersion(List<Dependency> dependencies, boolean looseMatch) {
+        for (Dependency dependency : dependencies) {
+            if (StringUtils.equals(dependency.getArtifactId(), artifactId)
+                    && StringUtils.equals(dependency.getGroupId(), groupId)
+                    && (looseMatch || StringUtils.equals(dependency.getClassifier(), classifier))
+                    && (looseMatch || StringUtils.equals(dependency.getType(), type))) {
+                version = dependency.getVersion();
+
+                return true;
+            }
+        }
+
+        return false;
     }
 }
